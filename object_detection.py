@@ -16,8 +16,9 @@ response ->
 
 {
  current_position: (x, y, z),
- target_position: (x, y, z)
- commands: ["grep" ,"move left", "down", "forward",]
+ target_position: (x, y, z),
+ commands: ["grep" ,"move left", "down", "forward",],
+ stop condition: "find table"
 }
 
 '''
