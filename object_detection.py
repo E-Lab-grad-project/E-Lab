@@ -8,12 +8,18 @@ the target class will be extracted from user input using the NLP model
 
 eg. "Move the cup to the left" -> 
 {
- object: "cup",
- action: "move left",
- current position: (x, y, z) ,
- stop position: (x, y, z)
- stop condition: "on the table"
+ object to find: "cup"
+ action: "move left
 }
+
+response -> 
+
+{
+ current_position: (x, y, z),
+ target_position: (x, y, z)
+ commands: ["grep" ,"move left", "down", "forward",]
+}
+
 '''
 target_class = 'cup'  
 
