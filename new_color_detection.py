@@ -1,4 +1,4 @@
--import cv2
+import cv2
 import numpy as np
 import imutils
 
@@ -43,7 +43,21 @@ cv2.createTrackbar("US", "Trackbars", 255, 255, nothing)
 cv2.createTrackbar("UV", "Trackbars", 255, 255, nothing)
 
 while True:
-        _,frame= cap.read()
+        ret,frame= cap.read()
+        
+        if not ret:
+                print("Failed to grab frame!")
+                continue
+        
+        if frame is None:
+                print("Frame is None!")
+                continue
+
+        if frame.size and frame.size == 0:
+                print("Empty frame!")
+                continue
+
+        print(f"frame shape: {frame.shape}, frame type: {frame.dtype}")
 
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         hsv = cv2.cvtColor(frame,cv2.COLOR_BGR2HSV)
