@@ -2,9 +2,32 @@
 import numpy as np
 import imutils
 
-cap= cv2.VideoCapture(0)
-cap.set(3,640)
-cap.set(4,480)
+# Fix for Wayland error (add at the very beginning)
+import os
+os.environ["QT_QPA_PLATFORM"] = "xcb"  # or "wayland" if supported
+
+# Initialize Pi camera using libcamera
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # Try V4L2 backend
+
+if not cap.isOpened():
+    # Try with different parameters for Pi camera
+    print("Trying alternative camera parameters...")
+    cap = cv2.VideoCapture(0, cv2.CAP_ANY)
+    
+if not cap.isOpened():
+    print("ERROR: Could not open camera!")
+    print("Trying direct camera index 0 with default backend...")
+    cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("FATAL: No camera detected!")
+    exit(1)
+
+print("Camera opened successfully")
+
+# Set resolution
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 def nothing(x):
     pass
 
