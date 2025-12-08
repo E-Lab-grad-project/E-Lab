@@ -1,0 +1,11 @@
+fastapi
+pydantic
+transformers
+torch
+typing
+ultralytics
+opencv-python
+picamera2
+numpy
+json
+
