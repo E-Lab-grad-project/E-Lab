@@ -7,7 +7,7 @@ import time
 # ---------------- SERIAL SETUP (with try/except) ----------------
 ser = None
 try:
-    ser = serial.Serial('COM3', 9600, timeout=1)
+    ser = serial.Serial('COM8', 9600, timeout=1)
     time.sleep(2)
     print("Serial connected to Arduino on COM3")
 except Exception as e:
