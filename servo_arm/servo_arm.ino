@@ -6,7 +6,7 @@ String incoming = "";
 int angle = 90;  // مركز السيرفو
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   myServo.attach(25);   // دبوس الإشارة على ESP32 (GPIO 5 مثال)
   myServo.write(angle);
   delay(500);
