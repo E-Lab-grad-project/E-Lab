@@ -7,5 +7,4 @@ ultralytics
 opencv-python
 picamera2
 numpy
-json
 
