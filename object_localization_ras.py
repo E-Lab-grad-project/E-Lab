@@ -1,4 +1,6 @@
-from picamera2 import Picamera2
+
+
+from picamera2 import Picamera2, Preview
 import cv2
 from ultralytics import YOLO
 import serial
@@ -61,14 +63,16 @@ def send_robot_state(x, y, z):
     grip_state = "CLOSE" if z < 0.10 else "OPEN"
     msg = f"X:{x},Y:{y},Z:{z:.2f}\n"
 
-    print("\n" + "=" * 60)
+
+    print("\n" + "="*60)
     print("🤖 ROBOT COMMAND")
     print(f"Base (X)        : {x}")
     print(f"Shoulder (Y)    : {y}")
     print(f"Distance (Z)    : {z:.2f}")
     print(f"Gripper         : {grip_state}")
     print(f"Serial Message  : {msg.strip()}")
-    print("=" * 60)
+
+    print("="*60)
 
     if ser is None:
         print("[NO SERIAL] Skipping send")
@@ -82,11 +86,13 @@ def send_robot_state(x, y, z):
 # ================= MAIN LOOP =================
 try:
     while True:
+
         # Capture frame from Pi Camera
         frame = picam2.capture_array()
 
         # 🔥 FIX: Convert from BGRA (4 channels) → BGR (3 channels)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
 
         h, w = frame.shape[:2]
         screen_cx = w / 2
