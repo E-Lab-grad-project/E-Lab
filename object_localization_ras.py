@@ -30,8 +30,8 @@ picam2.configure(preview_config)
 picam2.start()
 time.sleep(2)
 
-# ================= ZOOM OUT (NEW) =================
-def set_zoom_out(picam2, zoom_factor=0.85):
+# ================= ZOOM OUT =================
+def set_zoom_out(picam2, zoom_factor=0.95):
     sensor_w, sensor_h = picam2.camera_properties['PixelArraySize']
 
     crop_w = int(sensor_w * zoom_factor)
@@ -44,7 +44,6 @@ def set_zoom_out(picam2, zoom_factor=0.85):
         "ScalerCrop": (crop_x, crop_y, crop_w, crop_h)
     })
 
-# 🔍 APPLY ZOOM OUT (NEW LINE)
 set_zoom_out(picam2, zoom_factor=0.95)
 
 # ================= TRACKING PARAMS =================
@@ -53,11 +52,12 @@ prev_cx = None
 prev_cy = None
 
 FRAME_SKIP = 2
+SEND_EVERY_N_FRAMES = 6   # 🔥 الإضافة المطلوبة
 frame_count = 0
 last_results = None
 
 # ================= START FLAG =================
-tracking = False  # toggle start/stop
+tracking = False
 
 # ================= HELPER FUNCTIONS =================
 def clamp(val, minv, maxv):
@@ -100,8 +100,6 @@ def send_robot_state(x, y, z):
 try:
     while True:
         frame = picam2.capture_array()
-
-        # 🔥 FIX: BGRA → BGR (OLD FIX)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         h, w = frame.shape[:2]
@@ -113,10 +111,9 @@ try:
         # ===== TOGGLE TRACKING =====
         if key == ord('s'):
             tracking = not tracking
-            state_str = "STARTED" if tracking else "STOPPED"
-            print(f"🚀 Tracking {state_str}")
+            print("🚀 Tracking STARTED" if tracking else "🛑 Tracking STOPPED")
 
-        # ===== DRAW STATUS TEXT =====
+        # ===== STATUS TEXT =====
         status_text = "Tracking ON" if tracking else "Press 'S' to START"
         color = (0, 255, 0) if tracking else (0, 0, 255)
         cv2.putText(frame, status_text, (10, 30),
@@ -124,6 +121,7 @@ try:
 
         if tracking:
             frame_count += 1
+
             if frame_count % FRAME_SKIP == 0:
                 last_results = model(frame, imgsz=320, conf=0.4, verbose=False)
 
@@ -163,19 +161,21 @@ try:
                     servo_y = norm_to_angle(-cy_norm)
                     z_dist = estimate_distance(best_area)
 
-                    send_robot_state(servo_x, servo_y, z_dist)
+                    # 🔥 إرسال كل 6 فريمات فقط
+                    if frame_count % SEND_EVERY_N_FRAMES == 0:
+                        send_robot_state(servo_x, servo_y, z_dist)
 
-                    # ===== DRAW BOX & CENTER =====
+                    # ===== DRAW =====
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cx_pix = int((x1 + x2) / 2)
                     cy_pix = int((y1 + y2) / 2)
                     cv2.circle(frame, (cx_pix, cy_pix), 5, (0, 0, 255), -1)
+
                     cv2.putText(frame, f"X:{servo_x} Y:{servo_y}", (10, 60),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     cv2.putText(frame, f"Z:{z_dist:.2f}", (10, 90),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-        # ===== SHOW FRAME =====
         cv2.imshow("YOLO X/Y/Z Tracking (Zoom Out)", frame)
 
         if key == ord('q'):
