@@ -1,4 +1,4 @@
-from picamera2 import Picamera2, Preview
+from picamera2 import Picamera2
 import cv2
 from ultralytics import YOLO
 import serial
@@ -23,7 +23,9 @@ class_names = model.names
 
 # ================= PICAMERA2 SETUP =================
 picam2 = Picamera2()
-preview_config = picam2.create_preview_configuration(main={"format": "XRGB8888", "size": (640, 480)})
+preview_config = picam2.create_preview_configuration(
+    main={"format": "XRGB8888", "size": (640, 480)}
+)
 picam2.configure(preview_config)
 picam2.start()
 time.sleep(2)
@@ -59,14 +61,14 @@ def send_robot_state(x, y, z):
     grip_state = "CLOSE" if z < 0.10 else "OPEN"
     msg = f"X:{x},Y:{y},Z:{z:.2f}\n"
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("🤖 ROBOT COMMAND")
     print(f"Base (X)        : {x}")
     print(f"Shoulder (Y)    : {y}")
     print(f"Distance (Z)    : {z:.2f}")
     print(f"Gripper         : {grip_state}")
     print(f"Serial Message  : {msg.strip()}")
-    print("="*60)
+    print("=" * 60)
 
     if ser is None:
         print("[NO SERIAL] Skipping send")
@@ -80,7 +82,12 @@ def send_robot_state(x, y, z):
 # ================= MAIN LOOP =================
 try:
     while True:
+        # Capture frame from Pi Camera
         frame = picam2.capture_array()
+
+        # 🔥 FIX: Convert from BGRA (4 channels) → BGR (3 channels)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
         h, w = frame.shape[:2]
         screen_cx = w / 2
         screen_cy = h / 2
@@ -96,13 +103,20 @@ try:
         # ===== DRAW STATUS TEXT =====
         status_text = "Tracking ON" if tracking else "Press 'S' to START"
         color = (0, 255, 0) if tracking else (0, 0, 255)
-        cv2.putText(frame, status_text, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.putText(
+            frame, status_text, (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2
+        )
 
         if tracking:
             frame_count += 1
             if frame_count % FRAME_SKIP == 0:
-                last_results = model(frame, imgsz=320, conf=0.4, verbose=False)
+                last_results = model(
+                    frame,
+                    imgsz=320,
+                    conf=0.4,
+                    verbose=False
+                )
 
             if last_results:
                 best_box = None
@@ -147,10 +161,15 @@ try:
                     cx_pix = int((x1 + x2) / 2)
                     cy_pix = int((y1 + y2) / 2)
                     cv2.circle(frame, (cx_pix, cy_pix), 5, (0, 0, 255), -1)
-                    cv2.putText(frame, f"X:{servo_x} Y:{servo_y}", (10, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(frame, f"Z:{z_dist:.2f}", (10, 90),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+                    cv2.putText(
+                        frame, f"X:{servo_x} Y:{servo_y}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2
+                    )
+                    cv2.putText(
+                        frame, f"Z:{z_dist:.2f}", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2
+                    )
 
         # ===== SHOW FRAME =====
         cv2.imshow("YOLO X/Y/Z Tracking", frame)
