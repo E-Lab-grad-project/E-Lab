@@ -52,7 +52,7 @@ prev_cx = None
 prev_cy = None
 
 FRAME_SKIP = 2
-SEND_EVERY_N_FRAMES = 6   # 🔥 الإضافة المطلوبة
+SEND_EVERY_N_FRAMES = 1  # 🔥 الإضافة المطلوبة
 frame_count = 0
 last_results = None
 
