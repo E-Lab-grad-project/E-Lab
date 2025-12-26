@@ -26,24 +26,6 @@ int srv6Angle = 10;
 
 String incoming = ""; 
 
-// ================= SPEED CONTROL ================= 
-const int STEP_DELAY = 12; // ⏱️ زود الرقم = أبطأ 
-const int STEP_SIZE = 1;   // 🔹 1 درجة في كل خطوة 
-
-// ================= SMOOTH MOVE FUNCTION ================= 
-void smoothMove(Servo &srv, int &currentAngle, int targetAngle) { 
-  if (currentAngle == targetAngle) return; 
-  int step = (targetAngle > currentAngle) ? STEP_SIZE : -STEP_SIZE; 
-  while (currentAngle != targetAngle) { 
-    currentAngle += step; 
-    if ((step > 0 && currentAngle > targetAngle) || (step < 0 && currentAngle < targetAngle)) { 
-      currentAngle = targetAngle; 
-    } 
-    srv.write(currentAngle); 
-    delay(STEP_DELAY); 
-  } 
-} 
-
 void setup() { 
   Serial.begin(115200); 
   servoBase.attach(srv1); 
@@ -61,7 +43,7 @@ void setup() {
   servoGrip.write(srv6Angle); 
 
   delay(500); 
-  Serial.println("🟢 6DOF Arm Ready (Smooth + Coupled)"); 
+  Serial.println("🟢 6DOF Arm Ready (Direct Move)"); 
 } 
 
 void loop() { 
@@ -90,16 +72,19 @@ void loop() {
         } 
 
         // ===== BASE ===== 
-        smoothMove(servoBase, srv1Angle, xVal); 
+        servoBase.write(xVal); 
+        srv1Angle = xVal; 
 
         // ===== SHOULDER + ELBOW ===== 
-        smoothMove(servoShoulder, srv2Angle, targetShoulder); 
-        smoothMove(servoElbow, srv3Angle, targetElbow); 
+        servoShoulder.write(targetShoulder); 
+        srv2Angle = targetShoulder; 
+        servoElbow.write(targetElbow); 
+        srv3Angle = targetElbow; 
 
         // ===== GRIPPER ===== 
         if (zVal < 0.10) { 
-          smoothMove(servoShoulder, srv2Angle, 80); 
-          // delay(300); 
+          servoShoulder.write(80); 
+          srv2Angle = 80; 
           servoGrip.write(90); 
           Serial.println("✊ GRIP CLOSED"); 
         } else { 
