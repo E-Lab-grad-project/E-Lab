@@ -60,8 +60,8 @@ COMMANDS_MAP = {
 # ===============================
 # NLP model
 # ===============================
-tokenizer = AutoTokenizer.from_pretrained("robot_NLP_model")
-model = AutoModelForSequenceClassification.from_pretrained("robot_NLP_model")
+tokenizer = AutoTokenizer.from_pretrained("robot_intent_model")
+model = AutoModelForSequenceClassification.from_pretrained("robot_intent_model")
 intent_mapping = model.config.id2label
 
 # ===============================

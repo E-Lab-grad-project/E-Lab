@@ -1,0 +1,5 @@
+CAMERA_INDEX = 0
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+
+STUN_SERVERS = ["stun:stun.l.google.com:19302"]

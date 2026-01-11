@@ -1,2 +1,4 @@
 yolov8n.onnx
 yolov8n.pt
+robot_intent_model
+robot_NLP_model
