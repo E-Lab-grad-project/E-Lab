@@ -4,16 +4,18 @@ from threading import Thread
 from queue import Queue, Empty
 from core.interface import frameProcessor
 from .tracking import norm_to_angle, estimate_distance
+from robot_control import RobotController
 
 class YoloFrameProcessor(frameProcessor):
     """
-    WebRTC-safe YOLO frame processor.
-    Runs YOLO inference in a background thread to avoid blocking the main video loop.
-    Draws bounding boxes and X/Y/Z tracking info on frames.
+    WebRTC-safe YOLO frame processor with Arduino/ESP32 control.
+    Runs YOLO inference in a background thread and draws bounding boxes,
+    red dot, X/Y/Z tracking info, and sends commands to robot controller.
     """
 
-    def __init__(self, detector, alpha=0.65, frame_skip=2):
+    def __init__(self, detector, robot_controller: RobotController, alpha=0.65, frame_skip=2):
         self.detector = detector
+        self.robot_controller = robot_controller
         self.alpha = alpha
         self.frame_skip = frame_skip
 
@@ -36,6 +38,7 @@ class YoloFrameProcessor(frameProcessor):
         self._thread = Thread(target=self._worker, daemon=True)
         self._thread.start()
 
+    # ------------------------- WORKER THREAD -------------------------
     def _worker(self):
         """Background thread that runs YOLO inference."""
         while self._running:
@@ -54,8 +57,9 @@ class YoloFrameProcessor(frameProcessor):
             except Exception as e:
                 print("[YOLO WORKER ERROR]:", e)
             finally:
-                self._frame_for_yolo = None  # reset
+                self._frame_for_yolo = None
 
+    # ------------------------- PROCESS FRAME -------------------------
     def process(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
         screen_cx = w / 2
@@ -109,30 +113,31 @@ class YoloFrameProcessor(frameProcessor):
         servo_y = norm_to_angle(-cy / (h / 2))
         z_dist = estimate_distance(best_area)
 
-        # ===== DRAWING =====
-        # Draw green bounding box
+        # ================= DRAWING =================
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-        # Draw red dot at center
+        # Red dot at object center
         cx_pix = int((x1 + x2) / 2)
         cy_pix = int((y1 + y2) / 2)
         cv2.circle(frame, (cx_pix, cy_pix), 5, (0, 0, 255), -1)
-
-        # Draw X, Y, Z near the box
+        # Draw X/Y/Z near box
         cv2.putText(
             frame,
             f"X:{servo_x} Y:{servo_y} Z:{z_dist:.2f}",
-            (x1, y1 - 10),  # above the box
+            (x1, y1 - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (0, 255, 255),
             2,
         )
 
+        # ================= SEND TO ROBOT =================
+        self.robot_controller.send_state(servo_x, servo_y, z_dist)
+
         return frame
 
-
+    # ------------------------- STOP THREAD -------------------------
     def stop(self):
         """Call this to cleanly stop the background thread."""
         self._running = False
         self._thread.join()
+        self.robot_controller.close()
