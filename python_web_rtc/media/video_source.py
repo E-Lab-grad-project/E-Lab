@@ -8,6 +8,8 @@ class OpenCVCameraSource(VideoSource):
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)  
 
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         if not self.cap.isOpened():
             raise RuntimeError("Camera not accessible")
         
