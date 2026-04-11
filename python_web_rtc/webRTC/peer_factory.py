@@ -29,7 +29,7 @@ def create_peer():
     pc = RTCPeerConnection(configuration=config)
 
     source = create_camera()
-    processor = YoloFrameProcessor(detector=YoloDetector(target_class="person", model_path="yolov8n.pt"), robot_controller=RobotController())
+    processor = YoloFrameProcessor(detector=YoloDetector(target_class="cup", model_path="yolov8n.pt"), robot_controller=RobotController())
 
     pc.addTrack(VideoTrack(source, processor))
     return pc

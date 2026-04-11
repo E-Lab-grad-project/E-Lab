@@ -53,28 +53,36 @@ void loop() {
     String command = Serial.readStringUntil('\n');
     command.trim();
 
+    // Expect format: COMMAND:VALUE, e.g., MOVE_UP:15
+    int value = 30; // default step if no value sent
+    int colonIndex = command.indexOf(':');
+    if (colonIndex != -1) {
+      value = command.substring(colonIndex + 1).toInt();
+      command = command.substring(0, colonIndex);
+    }
+
     if (command == "MOVE_UP") {
-      srv2Angle = constrain(srv2Angle - 30, 0, 180);
+      srv2Angle = constrain(srv2Angle + value, 0, 180);
       servoShoulder.write(srv2Angle);
     }
     else if (command == "MOVE_DOWN") {
-      srv2Angle = constrain(srv2Angle + 30, 0, 180);
+      srv2Angle = constrain(srv2Angle - value, 0, 180);
       servoShoulder.write(srv2Angle);
     }
     else if (command == "MOVE_LEFT") {
-      srv1Angle = constrain(srv1Angle - 30, 0, 180);
+      srv1Angle = constrain(srv1Angle + value, 0, 180);
       servoBase.write(srv1Angle);
     }
     else if (command == "MOVE_RIGHT") {
-      srv1Angle = constrain(srv1Angle + 30, 0, 180);
+      srv1Angle = constrain(srv1Angle - value, 0, 180);
       servoBase.write(srv1Angle);
     }
     else if (command == "GRIP") {
-      srv6Angle = 0;   // close
+      srv6Angle = constrain(value, 0, 180);   // value determines grip angle
       servoGrip.write(srv6Angle);
     }
     else if (command == "RELEASE") {
-      srv6Angle = 90;  // open
+      srv6Angle = constrain(value, 0, 180);   // value determines release angle
       servoGrip.write(srv6Angle);
     }
     else {
