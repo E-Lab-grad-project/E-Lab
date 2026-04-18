@@ -27,13 +27,14 @@ class YoloFrameProcessor(frameProcessor):
         self.yolo_queue = Queue(maxsize=1)
         self.running = True
 
-        # ================= SMOOTHING =================
+        # ================= CONTROL =================
         self.prev_cx = None
         self.prev_cy = None
-        self.alpha = 0.65
+        self.alpha = 0.6
 
         self.last_send_time = 0
 
+        # ================= PERFORMANCE =================
         self.frame_counter = 0
         self.skip_rate = 3
 
@@ -72,56 +73,51 @@ class YoloFrameProcessor(frameProcessor):
         while self.running:
             try:
                 frame = self.frame_queue.get(timeout=1)
-                latest_frame = frame  # always keep latest
+                latest_frame = frame
             except Empty:
                 continue
 
-            # ================= FRAME SKIPPING =================
+            # ================= FRAME SKIP =================
             self.frame_counter += 1
-
             if self.frame_counter % self.skip_rate != 0:
                 continue
 
             if latest_frame is None:
                 continue
 
-            # ================= YOLO INFERENCE =================
+            # ================= FAST YOLO =================
             results = self.model(
                 latest_frame,
-                imgsz=640,
+                imgsz=320,   # 🔥 أهم optimization
                 conf=0.4,
                 verbose=False
             )
 
-            # ================= PUSH RESULT =================
+            # ================= PUSH =================
             if self.yolo_queue.full():
                 self.yolo_queue.get_nowait()
 
             self.yolo_queue.put(results)
-    # ================= MAIN LOGIC =================
+
+    # ================= DETECTION =================
     def _process_detections(self, frame, results):
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        display = frame.copy()
 
-        h, w = frame.shape[:2]
-        screen_cx = w / 2
-        screen_cy = h / 2
+        h, w = display.shape[:2]
+        cx0, cy0 = w / 2, h / 2
 
         best_box = None
         best_area = 0
 
-        # ================= FIND BEST OBJECT =================
+        # ================= FIND OBJECT =================
         for box in results[0].boxes:
 
             cls_id = int(box.cls[0])
-
             if self.class_names[cls_id] != self.target_class:
                 continue
 
-            # 🔥 YOLO already gives correct coords relative to original frame
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-
             area = (x2 - x1) * (y2 - y1)
 
             if area > best_area:
@@ -129,13 +125,13 @@ class YoloFrameProcessor(frameProcessor):
                 best_box = (x1, y1, x2, y2)
 
         if best_box is None:
-            return frame
+            return display
 
         x1, y1, x2, y2 = best_box
 
-        # ================= CENTER (FIXED) =================
-        cx = ((x1 + x2) / 2) - screen_cx
-        cy = ((y1 + y2) / 2) - screen_cy
+        # ================= CENTER =================
+        cx = ((x1 + x2) / 2) - cx0
+        cy = ((y1 + y2) / 2) - cy0
 
         # ================= SMOOTH =================
         if self.prev_cx is None:
@@ -150,30 +146,28 @@ class YoloFrameProcessor(frameProcessor):
         servo_y = norm_to_angle(-cy / (h / 2))
         z_dist = estimate_distance(best_area)
 
-        # ================= SEND (RATE LIMIT) =================
+        # ================= SEND RATE LIMIT =================
         now = time.time()
         if now - self.last_send_time > 0.05:
             self.robot_controller.send_state(servo_x, servo_y, z_dist)
             self.last_send_time = now
 
-        # ================= DRAW (FIXED VISUAL) =================
-        
+        # ================= DRAW =================
+        cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-        cv2.circle(frame,
+        cv2.circle(display,
                    (int((x1 + x2) / 2), int((y1 + y2) / 2)),
                    5, (0, 0, 255), -1)
 
-        cv2.putText(frame, f"X:{servo_x} Y:{servo_y}",
+        cv2.putText(display, f"X:{servo_x} Y:{servo_y}",
                     (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
 
-        cv2.putText(frame, f"Z:{z_dist:.2f}",
+        cv2.putText(display, f"Z:{z_dist:.2f}",
                     (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
 
-        return frame
+        return display
 
     # ================= STOP =================
     def stop(self):
