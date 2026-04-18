@@ -101,6 +101,7 @@ class YoloFrameProcessor(frameProcessor):
     # ================= MAIN LOGIC =================
     def _process_detections(self, frame, results):
 
+        frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         h, w = frame.shape[:2]
