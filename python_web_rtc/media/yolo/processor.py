@@ -34,6 +34,9 @@ class YoloFrameProcessor(frameProcessor):
 
         self.last_send_time = 0
 
+        self.frame_counter = 0
+        self.skip_rate = 3
+
         # ================= THREADS =================
         self.camera_thread = Thread(target=self._frame_worker, daemon=True)
         self.yolo_thread = Thread(target=self._yolo_worker, daemon=True)
@@ -64,21 +67,37 @@ class YoloFrameProcessor(frameProcessor):
 
     # ================= YOLO WORKER =================
     def _yolo_worker(self):
+        latest_frame = None
+
         while self.running:
             try:
                 frame = self.frame_queue.get(timeout=1)
+                latest_frame = frame  # always keep latest
             except Empty:
                 continue
 
-            # 🔥 IMPORTANT FIX:
-            # NO manual resize distortion
-            results = self.model(frame, imgsz=640, conf=0.4, verbose=False)
+            # ================= FRAME SKIPPING =================
+            self.frame_counter += 1
 
+            if self.frame_counter % self.skip_rate != 0:
+                continue
+
+            if latest_frame is None:
+                continue
+
+            # ================= YOLO INFERENCE =================
+            results = self.model(
+                latest_frame,
+                imgsz=640,
+                conf=0.4,
+                verbose=False
+            )
+
+            # ================= PUSH RESULT =================
             if self.yolo_queue.full():
                 self.yolo_queue.get_nowait()
 
             self.yolo_queue.put(results)
-
     # ================= MAIN LOGIC =================
     def _process_detections(self, frame, results):
 
