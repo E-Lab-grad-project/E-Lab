@@ -27,16 +27,16 @@ class YoloFrameProcessor(frameProcessor):
         self.yolo_queue = Queue(maxsize=1)
         self.running = True
 
-        # ================= CONTROL =================
+        # ================= SMOOTHING =================
         self.prev_cx = None
         self.prev_cy = None
-        self.alpha = 0.6
+        self.alpha = 0.65
 
         self.last_send_time = 0
 
-        # ================= PERFORMANCE =================
+        # ================= FRAME SKIP =================
         self.frame_counter = 0
-        self.skip_rate = 3
+        self.skip_rate = 1
 
         # ================= THREADS =================
         self.camera_thread = Thread(target=self._frame_worker, daemon=True)
@@ -77,7 +77,7 @@ class YoloFrameProcessor(frameProcessor):
             except Empty:
                 continue
 
-            # ================= FRAME SKIP =================
+            # ================= FRAME SKIPPING =================
             self.frame_counter += 1
             if self.frame_counter % self.skip_rate != 0:
                 continue
@@ -85,39 +85,42 @@ class YoloFrameProcessor(frameProcessor):
             if latest_frame is None:
                 continue
 
-            # ================= FAST YOLO =================
+            # ================= YOLO INFERENCE =================
             results = self.model(
                 latest_frame,
-                imgsz=320,   # 🔥 أهم optimization
+                imgsz=640,
                 conf=0.4,
                 verbose=False
             )
 
-            # ================= PUSH =================
             if self.yolo_queue.full():
                 self.yolo_queue.get_nowait()
 
             self.yolo_queue.put(results)
 
-    # ================= DETECTION =================
+    # ================= MAIN LOGIC =================
     def _process_detections(self, frame, results):
 
-        display = frame.copy()
+        # ================= FIX ONLY HERE (COLOR CORRECTION) =================
+        display = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
         h, w = display.shape[:2]
-        cx0, cy0 = w / 2, h / 2
+        screen_cx = w / 2
+        screen_cy = h / 2
 
         best_box = None
         best_area = 0
 
-        # ================= FIND OBJECT =================
+        # ================= FIND BEST OBJECT =================
         for box in results[0].boxes:
 
             cls_id = int(box.cls[0])
+
             if self.class_names[cls_id] != self.target_class:
                 continue
 
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+
             area = (x2 - x1) * (y2 - y1)
 
             if area > best_area:
@@ -130,10 +133,10 @@ class YoloFrameProcessor(frameProcessor):
         x1, y1, x2, y2 = best_box
 
         # ================= CENTER =================
-        cx = ((x1 + x2) / 2) - cx0
-        cy = ((y1 + y2) / 2) - cy0
+        cx = ((x1 + x2) / 2) - screen_cx
+        cy = ((y1 + y2) / 2) - screen_cy
 
-        # ================= SMOOTH =================
+        # ================= SMOOTHING =================
         if self.prev_cx is None:
             self.prev_cx, self.prev_cy = cx, cy
         else:
@@ -146,7 +149,7 @@ class YoloFrameProcessor(frameProcessor):
         servo_y = norm_to_angle(-cy / (h / 2))
         z_dist = estimate_distance(best_area)
 
-        # ================= SEND RATE LIMIT =================
+        # ================= SEND (RATE LIMIT) =================
         now = time.time()
         if now - self.last_send_time > 0.05:
             self.robot_controller.send_state(servo_x, servo_y, z_dist)
