@@ -1,115 +1,113 @@
 import cv2
 import numpy as np
-from threading import Thread, Event
+from threading import Thread, Lock
 from queue import Queue, Empty
+import time
+
 from core.interface import frameProcessor
 from .tracking import norm_to_angle, estimate_distance
 from robot_control import RobotController
-import time
+
 
 class YoloFrameProcessor(frameProcessor):
-    """YOLO + Tracker processor with ghost-box prevention and ESP terminal simulation."""
 
-    def __init__(self, detector, robot_controller: RobotController, alpha=0.65, detect_every=3):
+    def __init__(self, detector, robot_controller: RobotController):
         self.detector = detector
         self.robot_controller = robot_controller
-        self.alpha = alpha
-        self.detect_every = detect_every
 
-        # Tracker state
+        # -------- FRAME PIPELINE --------
+        self.frame_queue = Queue(maxsize=1)      # always latest frame
+        self.yolo_queue = Queue(maxsize=1)       # detection results
+
+        self.running = True
+        self.lock = Lock()
+
+        # -------- TRACKER --------
         self.tracker = None
         self.tracker_box = None
         self.tracker_ok = False
-        self.object_detected = False
 
-        # Smoothing
+        # -------- SMOOTHING --------
         self.prev_cx = None
         self.prev_cy = None
+        self.alpha = 0.7
 
-        # Frame counter
-        self.frame_count = 0
-
-        # YOLO & tracker revalidation
-        self._queue = Queue(maxsize=1)
-        self._frame_for_yolo = None
-        self._new_frame_event = Event()
-        self._running = True
-
-        self.no_detection_count = 0
-        self.max_no_detection = 3  # consecutive frames with no YOLO detection → reset
-
-        # Command timing
+        # -------- CONTROL --------
         self.last_send_time = 0
-        self.stopped = True
 
-        # last known servo values (for terminal)
-        self.last_servo_x = 90
-        self.last_servo_y = 90
-        self.last_z = 1
+        # -------- START THREADS --------
+        self.camera_thread = Thread(target=self._frame_buffer_worker, daemon=True)
+        self.yolo_thread = Thread(target=self._yolo_worker, daemon=True)
 
-        # Start YOLO worker thread
-        self._thread = Thread(target=self._worker, daemon=True)
-        self._thread.start()
+        self.camera_thread.start()
+        self.yolo_thread.start()
 
-    # ----------------- YOLO WORKER -----------------
-    def _worker(self):
-        while self._running:
-            self._new_frame_event.wait()
-            self._new_frame_event.clear()
+    # ================= CAMERA BUFFER =================
+    def _frame_buffer_worker(self):
+        """Keeps only latest frame (no lag)"""
+        while self.running:
+            if hasattr(self, "_latest_frame"):
+                if self.frame_queue.full():
+                    try:
+                        self.frame_queue.get_nowait()
+                    except:
+                        pass
+                self.frame_queue.put(self._latest_frame)
 
-            frame = self._frame_for_yolo
-            if frame is None:
+            time.sleep(0.001)
+
+    # ================= YOLO WORKER =================
+    def _yolo_worker(self):
+        while self.running:
+            try:
+                frame = self.frame_queue.get(timeout=1)
+            except Empty:
                 continue
 
             try:
-                results = self.detector.detect(frame)
+                small = cv2.resize(frame, (320, 240))
+                results = self.detector.detect(small)
 
-                if not self._queue.empty():
-                    try:
-                        self._queue.get_nowait()
-                    except Empty:
-                        pass
+                if self.yolo_queue.full():
+                    self.yolo_queue.get_nowait()
 
-                self._queue.put(results)
+                self.yolo_queue.put((results, frame.shape))
 
             except Exception as e:
-                print("[YOLO worker error]", e)
+                print("[YOLO ERROR]", e)
 
-    # ----------------- PROCESS FRAME -----------------
+    # ================= MAIN PROCESS =================
     def process(self, frame: np.ndarray) -> np.ndarray:
-        h, w = frame.shape[:2]
-        screen_cx = w / 2
-        screen_cy = h / 2
-        self.frame_count += 1
 
-        # Update tracker if exists
+        # update latest frame (producer input)
+        self._latest_frame = frame
+
+        h, w = frame.shape[:2]
+        screen_cx, screen_cy = w / 2, h / 2
+
+        # -------- UPDATE TRACKER --------
         if self.tracker is not None:
             self.tracker_ok, self.tracker_box = self.tracker.update(frame)
 
             if not self.tracker_ok:
                 self._reset_tracker()
 
-        # Determine if we need YOLO detection
-        need_detection = (self.frame_count % self.detect_every == 0) or not self.tracker_ok
+        # -------- GET YOLO RESULT --------
+        try:
+            results, original_shape = self.yolo_queue.get_nowait()
+            self._update_tracker(frame, results, original_shape)
+        except Empty:
+            pass
 
-        if need_detection:
-            self._frame_for_yolo = frame
-            self._new_frame_event.set()
-
-            try:
-                results = self._queue.get_nowait()
-                self._update_tracker_from_yolo(frame, results)
-            except Empty:
-                pass
-
-        # If tracker invalid, return frame
-        if not self.tracker_ok or self.tracker_box is None:
+        # -------- NO TRACK --------
+        if not self.tracker_ok:
             return frame
 
-        # ---------------- TRACKED BOX -----------------
-        x, y, bw, bh = [int(v) for v in self.tracker_box]
+        # -------- BOX --------
+        x, y, bw, bh = map(int, self.tracker_box)
         area = bw * bh
-        if area < 1000 or area > (w * h * 0.8):
+
+        if area < 800 or area > (w * h * 0.7):
             self._reset_tracker()
             return frame
 
@@ -119,7 +117,7 @@ class YoloFrameProcessor(frameProcessor):
         cx = ((x1 + x2) / 2) - screen_cx
         cy = ((y1 + y2) / 2) - screen_cy
 
-        # Smoothing
+        # -------- SMOOTH --------
         if self.prev_cx is None:
             self.prev_cx, self.prev_cy = cx, cy
         else:
@@ -127,111 +125,80 @@ class YoloFrameProcessor(frameProcessor):
             cy = self.alpha * self.prev_cy + (1 - self.alpha) * cy
             self.prev_cx, self.prev_cy = cx, cy
 
+        # -------- CONTROL --------
         servo_x = norm_to_angle(cx / (w / 2))
         servo_y = norm_to_angle(-cy / (h / 2))
-        z_dist = estimate_distance(area=area)
+        z_dist = estimate_distance(area)
 
-        # ---------------- DRAW -----------------
+        # -------- DRAW --------
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.circle(frame, ((x1 + x2)//2, (y1 + y2)//2), 5, (0, 0, 255), -1)
-        cv2.putText(frame, f"X:{servo_x} Y:{servo_y} Z:{z_dist:.2f}",
-                    (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
 
-        # ---------------- SEND COMMAND -----------------
+        # -------- SEND --------
         now = time.time()
-        if now - self.last_send_time > 0.05 and self.tracker_ok:
-            self.last_servo_x = servo_x
-            self.last_servo_y = servo_y
-            self.last_z = z_dist
-
-            # Terminal simulation
-            print("🤖 ROBOT COMMAND")
-            print(f"Base (X)        : {servo_x}")
-            print(f"Shoulder (Y)    : {servo_y}")
-            print(f"Distance (Z)    : {z_dist:.2f}")
-            print("Serial Message  :", f"X:{servo_x},Y:{servo_y},Z:{z_dist:.2f}")
-            print("============================================================")
-
-            # Send to ESP if connected
+        if now - self.last_send_time > 0.05:
             try:
                 self.robot_controller.send_state(servo_x, servo_y, z_dist)
-            except Exception:
-                print("[NO SERIAL] Skipping send")
-
+            except:
+                pass
             self.last_send_time = now
 
         return frame
 
-    # ----------------- UPDATE TRACKER FROM YOLO -----------------
-    def _update_tracker_from_yolo(self, frame, results):
+    # ================= TRACKER UPDATE =================
+    def _update_tracker(self, frame, results, shape):
+
         if results is None or len(results) == 0:
-            self.no_detection_count += 1
-            if self.no_detection_count >= self.max_no_detection:
-                self._reset_tracker()
             return
 
-        best_box = None
+        h, w = shape[:2]
+        sx, sy = w / 320, h / 240
+
+        best = None
         best_area = 0
 
-        try:
-            for box in results[0].boxes:
-                cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
+        for box in results[0].boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
 
-                if self.detector.class_names[cls_id] != self.detector.target_class:
-                    continue
+            if self.detector.class_names[cls_id] != self.detector.target_class:
+                continue
+            if conf < 0.4:
+                continue
 
-                if conf < 0.4:  # only high-confidence
-                    continue
+            x1, y1, x2, y2 = box.xyxy[0]
 
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                area = (x2 - x1) * (y2 - y1)
+            x1, y1 = int(x1 * sx), int(y1 * sy)
+            x2, y2 = int(x2 * sx), int(y2 * sy)
 
-                if area > best_area:
-                    best_area = area
-                    best_box = (x1, y1, x2, y2)
+            area = (x2 - x1) * (y2 - y1)
 
-        except Exception as e:
-            print("[YOLO PROCESS ERROR]", e)
+            if area > best_area:
+                best_area = area
+                best = (x1, y1, x2, y2)
+
+        if best is None:
             return
 
-        if best_box is None:
-            self.no_detection_count += 1
-            if self.no_detection_count >= self.max_no_detection:
-                self._reset_tracker()
-            return
-        else:
-            self.no_detection_count = 0
-
-        # Initialize tracker
-        x1, y1, x2, y2 = best_box
+        x1, y1, x2, y2 = best
         bbox = (x1, y1, x2 - x1, y2 - y1)
-        self.tracker = cv2.legacy.TrackerMOSSE_create()
+
+        self.tracker = cv2.legacy.TrackerCSRT_create()
         self.tracker.init(frame, bbox)
+
         self.tracker_box = bbox
         self.tracker_ok = True
-        self.object_detected = True
-        self.tracker_fail_count = 0
-        self.stopped = False
-        print("TRACKER INITIALIZED")
 
-    # ----------------- RESET TRACKER -----------------
+    # ================= RESET =================
     def _reset_tracker(self):
-        if not self.stopped:
-            print("TRACK LOST → Holding last position")
         self.tracker = None
         self.tracker_box = None
         self.tracker_ok = False
-        self.object_detected = False
         self.prev_cx = None
         self.prev_cy = None
-        self.tracker_fail_count = 0
-        self.no_detection_count = 0
-        self.stopped = True
 
-    # ----------------- STOP THREAD -----------------
+    # ================= STOP =================
     def stop(self):
-        self._running = False
-        self._new_frame_event.set()
-        self._thread.join()
+        self.running = False
+        self.camera_thread.join()
+        self.yolo_thread.join()
         self.robot_controller.close()
