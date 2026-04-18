@@ -36,7 +36,7 @@ class YoloFrameProcessor(frameProcessor):
 
         # ================= FRAME SKIP =================
         self.frame_counter = 0
-        self.skip_rate = 1
+        self.skip_rate = 3
 
         # ================= THREADS =================
         self.camera_thread = Thread(target=self._frame_worker, daemon=True)
@@ -47,6 +47,10 @@ class YoloFrameProcessor(frameProcessor):
 
     # ================= INPUT =================
     def process(self, frame: np.ndarray) -> np.ndarray:
+
+        # ================= GLOBAL COLOR FIX (IMPORTANT) =================
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
         self._latest_frame = frame
 
         try:
@@ -101,8 +105,7 @@ class YoloFrameProcessor(frameProcessor):
     # ================= MAIN LOGIC =================
     def _process_detections(self, frame, results):
 
-        # ================= FIX ONLY HERE (COLOR CORRECTION) =================
-        display = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        display = frame.copy()
 
         h, w = display.shape[:2]
         screen_cx = w / 2
