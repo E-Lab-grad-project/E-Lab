@@ -82,6 +82,8 @@ class YoloFrameProcessor(frameProcessor):
     # ================= MAIN LOGIC =================
     def _process_detections(self, frame, results):
 
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
         h, w = frame.shape[:2]
         screen_cx = w / 2
         screen_cy = h / 2
@@ -135,6 +137,8 @@ class YoloFrameProcessor(frameProcessor):
             self.last_send_time = now
 
         # ================= DRAW (FIXED VISUAL) =================
+        
+
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
         cv2.circle(frame,
