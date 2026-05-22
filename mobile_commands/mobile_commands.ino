@@ -1,95 +1,90 @@
-#include <ESP32Servo.h> 
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHT.h"
 
-// ===============================
-// Declare 6 servo objects
-// ===============================
-Servo servoBase;
-Servo servoShoulder;
-Servo servoElbow;
-Servo servoWrist;
-Servo servoWristRot;
-Servo servoGrip;
+// Wi-Fi Credentials
+const char* ssid = "Diaa's Galaxy";
+const char* password = "12345678";
 
-// ================= PINS =================
-const int srv1 = 25;
-const int srv2 = 26;
-const int srv3 = 27;
-const int srv4 = 14;
-const int srv5 = 12;
-const int srv6 = 13;
+// ThingsBoard MQTT settings
+const char* mqttServer = "eu.thingsboard.cloud"; // Or your ThingsBoard server
+const int mqttPort = 1883;
+const char* accessToken = "bSRABPjxL4BM8IerNebk"; // Paste your device's token here
 
-// ================= START POSITIONS =================
-int srv1Angle = 90;   // Base
-int srv2Angle = 140;  // Shoulder
-int srv3Angle = 180;  // Elbow
-int srv4Angle = 0;    // Wrist
-int srv5Angle = 90;   // Wrist rotation
-int srv6Angle = 10;   // Gripper
+// DHT settings
+#define DHTPIN 4     // GPIO connected to DHT11 data pin
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+// Initialize MQTT Client
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
+
+// Function to connect to Wi-Fi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("WiFi connected.");
+}
+
+// Function to connect to ThingsBoard MQTT server
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Connecting to ThingsBoard...");
+    if (client.connect("ESP32", accessToken, "")) {
+      Serial.println("Connected.");
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds.");
+      delay(5000);
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-
-  // Attach servos
-  servoBase.attach(srv1);
-  servoShoulder.attach(srv2);
-  servoElbow.attach(srv3);
-  servoWrist.attach(srv4);
-  servoWristRot.attach(srv5);
-  servoGrip.attach(srv6);
-
-  // Move to start position
-  servoBase.write(srv1Angle);
-  servoShoulder.write(srv2Angle);
-  servoElbow.write(srv3Angle);
-  servoWrist.write(srv4Angle);
-  servoWristRot.write(srv5Angle);
-  servoGrip.write(srv6Angle);
-
-  Serial.println("🟢 6DOF Arm Ready");
+  dht.begin();
+  setup_wifi();
+  client.setServer(mqttServer, mqttPort);
 }
 
 void loop() {
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
-
-    // Expect format: COMMAND:VALUE, e.g., MOVE_UP:15
-    int value = 30; // default step if no value sent
-    int colonIndex = command.indexOf(':');
-    if (colonIndex != -1) {
-      value = command.substring(colonIndex + 1).toInt();
-      command = command.substring(0, colonIndex);
-    }
-
-    if (command == "MOVE_UP") {
-      srv2Angle = constrain(srv2Angle + value, 0, 180);
-      servoShoulder.write(srv2Angle);
-    }
-    else if (command == "MOVE_DOWN") {
-      srv2Angle = constrain(srv2Angle - value, 0, 180);
-      servoShoulder.write(srv2Angle);
-    }
-    else if (command == "MOVE_LEFT") {
-      srv1Angle = constrain(srv1Angle + value, 0, 180);
-      servoBase.write(srv1Angle);
-    }
-    else if (command == "MOVE_RIGHT") {
-      srv1Angle = constrain(srv1Angle - value, 0, 180);
-      servoBase.write(srv1Angle);
-    }
-    else if (command == "GRIP") {
-      srv6Angle = constrain(value, 0, 180);   // value determines grip angle
-      servoGrip.write(srv6Angle);
-    }
-    else if (command == "RELEASE") {
-      srv6Angle = constrain(value, 0, 180);   // value determines release angle
-      servoGrip.write(srv6Angle);
-    }
-    else {
-      Serial.print("⚠️ Unknown command: ");
-      Serial.println(command);
-    }
-
-    delay(500); // allow servo movement
+  if (!client.connected()) {
+    reconnect();
   }
+  client.loop();
+
+  // Read temperature and humidity from DHT11
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  // Check if readings are valid
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+
+  // Create JSON payload
+  String payload = "{";
+  payload += "\"temperature\":"; payload += temperature; payload += ",";
+  payload += "\"humidity\":"; payload += humidity;
+  payload += "}";
+
+  // Publish data to ThingsBoard
+  Serial.print("Publishing data: ");
+  Serial.println(payload);
+  client.publish("v1/devices/me/telemetry", payload.c_str());
+
+  // Wait 10 seconds before sending the next data
+  delay(10000);
 }
