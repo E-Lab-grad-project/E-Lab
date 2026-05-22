@@ -36,7 +36,7 @@ class YoloFrameProcessor(frameProcessor):
 
         # ================= FRAME SKIP =================
         self.frame_counter = 0
-        self.skip_rate = 3
+        self.skip_rate = 1
 
         # ================= THREADS =================
         self.camera_thread = Thread(target=self._frame_worker, daemon=True)
