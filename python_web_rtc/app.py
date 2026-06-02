@@ -6,8 +6,9 @@ pcs = set()
 
 async def offer(request):
     data = await request.json()
+    processor_type = data.get("processor") or data.get("processorType") or "yolo"
 
-    pc = create_peer()
+    pc = create_peer(processor_type=processor_type)
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
