@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 from aiortc import VideoStreamTrack
 from av import VideoFrame
 from core.interface import VideoSource, frameProcessor
@@ -14,10 +15,14 @@ class VideoTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
 
         frame = self.source.read()
+
+        # Guard: if no frame yet (Pi stream not started), send black frame
+        if frame is None:
+            frame = np.zeros((640, 640, 3), dtype=np.uint8)
+
         frame = self.processor.process(frame)
-
-
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
         video_frame = VideoFrame.from_ndarray(frame, format="rgb24")
         video_frame.pts = pts
         video_frame.time_base = time_base

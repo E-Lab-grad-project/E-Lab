@@ -2,23 +2,27 @@ from aiortc import RTCPeerConnection, RTCConfiguration, RTCIceServer
 from webRTC.tracks import VideoTrack
 from media.video_source import OpenCVCameraSource
 from media.yolo.processor import YoloFrameProcessor
-from media.yolo.mixeg_grid_pi import MixedGridProcessor
+from media.yolo.mixed_grid_pi import MixedGridProcessor
 from core.config import STUN_SERVERS, CAMERA_TYPE
 from robot_control import RobotController
+from media.webrtc_camera_source import WebRTCCameraSource
+
+
+# from media.udp_camera_source import UDPCameraSource
+from media.pi_track_store import get_pi_track
 
 def create_camera():
-    if CAMERA_TYPE == "picamera":
-        try:
-            from media.pi_camera_source import PiCamera2Source
-            print("🍓 Using Raspberry Pi Camera")
-            return PiCamera2Source()
-        except ImportError:
-            print("⚠ Picamera2 not available. Falling back to OpenCV camera.")
-            print("💻 Using OpenCV Camera")
-            return OpenCVCameraSource()
-    else:
-        print("💻 Using OpenCV Camera")
-        return OpenCVCameraSource()
+
+    print("📡 waiting WebRTC stream")
+
+    track = get_pi_track()
+
+    if track is None:
+        raise RuntimeError(
+            "Pi stream not connected"
+        )
+
+    return WebRTCCameraSource(track)
 
 
 def create_peer(processor_type: str = "yolo"):
