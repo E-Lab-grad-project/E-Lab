@@ -18,6 +18,4 @@ class OpenCVCameraSource(VideoSource):
         ret, frame = self.cap.read()
         if not ret:
             raise RuntimeError("Failed to read frame from camera")
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return frame
-    
