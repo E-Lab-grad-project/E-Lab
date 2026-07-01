@@ -1,0 +1,38 @@
+{
+  "intrinsics": {
+    "fx": 615.0,
+    "fy": 615.0,
+    "cx": 320.0,
+    "cy": 240.0
+  },
+  "depth": {
+    "z_near_m": 0.15,
+    "z_far_m": 0.80
+  },
+  "grasp_orientation": {
+    "roll_deg": 180.0,
+    "pitch_deg": 0.0,
+    "yaw_deg": 90.0
+  },
+  "motion": {
+    "approach_height_m": 0.10,
+    "grasp_depth_offset_m": 0.0,
+    "retreat_height_m": 0.12,
+    "gripper_open_angle_deg": 90.0,
+    "gripper_close_angle_deg": 10.0,
+    "step_delay_s": 0.5,
+    "move_home_before_pick": true
+  },
+  "pipeline": {
+    "polling_interval_s": 0.15,
+    "min_confidence": 0.40,
+    "cooldown_after_pick_s": 3.0,
+    "enabled": false
+  },
+  "camera_to_robot_transform": [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+  ]
+}

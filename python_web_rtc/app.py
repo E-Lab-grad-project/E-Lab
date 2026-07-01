@@ -3,12 +3,31 @@ from aiortc import RTCSessionDescription
 from webRTC.peer_factory import create_peer
 
 from media.pi_track_store import set_pi_track
+from media.hand_mirror.state import hand_mirror_state
+from media.yolo.mixed_grid_pi import get_latest_detections
 from aiortc import RTCPeerConnection
+import os
 
 pcs = set()
-
-
 pi_pcs = set()
+_robotics_bridge = None
+
+
+async def _start_robotics(_app: web.Application) -> None:
+    global _robotics_bridge
+    if os.environ.get("ROBOTICS_ENABLED", "").lower() not in ("1", "true", "yes"):
+        return
+    from robotics.integration import configure_logging, start_robotics_bridge
+
+    configure_logging()
+    _robotics_bridge = start_robotics_bridge()
+
+
+async def _stop_robotics(_app: web.Application) -> None:
+    global _robotics_bridge
+    if _robotics_bridge is not None:
+        _robotics_bridge.stop()
+        _robotics_bridge = None
 
 async def pi_offer(request):
 
@@ -78,9 +97,28 @@ async def offer(request):
     )
 
 
+async def hand_mirror_set(request):
+    data = await request.json()
+    hand_mirror_state.mirroring_enabled = bool(data.get("enabled", False))
+    return web.json_response({"mirroring": hand_mirror_state.mirroring_enabled})
+
+
+async def hand_mirror_status(_request):
+    return web.json_response(hand_mirror_state.to_dict())
+
+
+async def detections_status(_request):
+    return web.json_response({"detections": get_latest_detections()})
+
+
 app = web.Application()
+app.on_startup.append(_start_robotics)
+app.on_cleanup.append(_stop_robotics)
 app.router.add_post("/offer", offer)
 app.router.add_post("/pi-offer", pi_offer)
+app.router.add_post("/hand-mirror/mirror", hand_mirror_set)
+app.router.add_get("/hand-mirror/status", hand_mirror_status)
+app.router.add_get("/detections/status", detections_status)
 
 if __name__ == "__main__":
     print("routes loaded")

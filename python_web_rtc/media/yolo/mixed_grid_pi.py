@@ -8,21 +8,30 @@ from ultralytics import YOLO
 
 from core.interface import frameProcessor
 from robot_control import RobotController
+from .tracking import estimate_distance
+import torch
+
+# =====================================================
+# INFERENCE DEVICE — prefer GPU, fall back to CPU safely
+# =====================================================
+
+def _resolve_inference_device():
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+        return "cpu"
+    try:
+        torch.zeros(1, device="cuda:0")
+        return 0
+    except RuntimeError:
+        return "cpu"
+
+INFERENCE_DEVICE = _resolve_inference_device()
+print(f"YOLO inference device: {INFERENCE_DEVICE}")
 
 # =====================================================
 # LOAD MODEL
 # =====================================================
 
-model = YOLO("last.pt")
-
-# =====================================================
-# BOARD CONFIGURATION
-# =====================================================
-
-BOARD_WIDTH_CM  = 16 * 5
-BOARD_HEIGHT_CM = 16 * 5
-CELL_WIDTH_CM   = 7
-CELL_HEIGHT_CM  = 5
+model = YOLO("media/yolo/best-5.pt")
 
 # =====================================================
 # CAMERA STREAM
@@ -112,122 +121,18 @@ class CameraStream:
 
 # NOTE: CameraStream and script execution are only started in the main() entrypoint below.
 
-# =====================================================
-# PERSPECTIVE CALIBRATION
-# =====================================================
-
-image_points = np.float32([
-    [180,       150      ],
-    [640 - 180, 150      ],
-    [640 - 20,  640 - 150],
-    [30,        640 - 150],
-])
-
-real_points = np.float32([
-    [0,               0              ],
-    [BOARD_WIDTH_CM,  0              ],
-    [BOARD_WIDTH_CM,  BOARD_HEIGHT_CM],
-    [0,               BOARD_HEIGHT_CM],
-])
-
-matrix         = cv2.getPerspectiveTransform(image_points, real_points)
-inverse_matrix = cv2.getPerspectiveTransform(real_points,  image_points)
-
-# =====================================================
-# PRE-COMPUTE GRID PIXEL MAP
-# =====================================================
-
-COLS = int(BOARD_WIDTH_CM  / CELL_WIDTH_CM)
-ROWS = int(BOARD_HEIGHT_CM / CELL_HEIGHT_CM)
-
-def cm_to_pixel(x_cm, y_cm):
-    pt = np.array([[[x_cm, y_cm]]], dtype=np.float32)
-    px = cv2.perspectiveTransform(pt, inverse_matrix)
-    return (int(px[0][0][0]), int(px[0][0][1]))
-
-def pixel_to_cm(px, py):
-    pt   = np.array([[[px, py]]], dtype=np.float32)
-    real = cv2.perspectiveTransform(pt, matrix)
-    return float(real[0][0][0]), float(real[0][0][1])
-
-CELL_CORNERS = {}
-for gx in range(COLS):
-    for gy in range(ROWS):
-        x0, y0 = gx * CELL_WIDTH_CM, gy * CELL_HEIGHT_CM
-        CELL_CORNERS[(gx, gy)] = np.array([
-            cm_to_pixel(x0,                y0),
-            cm_to_pixel(x0 + CELL_WIDTH_CM, y0),
-            cm_to_pixel(x0 + CELL_WIDTH_CM, y0 + CELL_HEIGHT_CM),
-            cm_to_pixel(x0,                y0 + CELL_HEIGHT_CM),
-        ], dtype=np.int32)
-
-GRID_LINES_V = [(cm_to_pixel(i * CELL_WIDTH_CM,  0),
-                 cm_to_pixel(i * CELL_WIDTH_CM,  BOARD_HEIGHT_CM))
-                for i in range(COLS + 1)]
-GRID_LINES_H = [(cm_to_pixel(0,  j * CELL_HEIGHT_CM),
-                 cm_to_pixel(BOARD_WIDTH_CM, j * CELL_HEIGHT_CM))
-                for j in range(ROWS + 1)]
-
-# =====================================================
-# DETECTION SETTINGS
-# =====================================================
-
 CONF_THRESHOLD = 0.40
 color_histories = {}
+z_histories     = {}
 box_history     = {}
 color_cache     = {}
 COLOR_EVERY_N   = 10
 INFERENCE_IMG_SIZE = 640
-SUBMIT_EVERY_N = 2   # submit every 2 display frames for faster real-time performance
+SUBMIT_EVERY_N = 1   # submit every 2 display frames for faster real-time performance
 last_results    = []
 
 # =====================================================
-# GRID DRAWING
-# =====================================================
-
-def draw_grid(frame):
-    for p1, p2 in GRID_LINES_V:
-        cv2.line(frame, p1, p2, (0, 255, 0), 1)
-    for p1, p2 in GRID_LINES_H:
-        cv2.line(frame, p1, p2, (0, 255, 0), 1)
-
-# =====================================================
-# AXIS LABELS
-# =====================================================
-
-def draw_axis_labels(frame):
-    font, fs, th = cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
-
-    for i in range(COLS):
-        x_cm = i * CELL_WIDTH_CM + CELL_WIDTH_CM / 2
-        pt   = cm_to_pixel(x_cm, BOARD_HEIGHT_CM)
-        lbl  = str(i)
-        (tw, th_), _ = cv2.getTextSize(lbl, font, fs, th)
-        cv2.putText(frame, lbl, (pt[0] - tw // 2, pt[1] + th_ + 6),
-                    font, fs, (255, 200, 0), th, cv2.LINE_AA)
-
-    for j in range(ROWS):
-        y_cm = j * CELL_HEIGHT_CM + CELL_HEIGHT_CM / 2
-        pt   = cm_to_pixel(0, y_cm)
-        lbl  = str(j)
-        (tw, th_), _ = cv2.getTextSize(lbl, font, fs, th)
-        cv2.putText(frame, lbl, (pt[0] - tw - 8, pt[1] + th_ // 2),
-                    font, fs, (0, 200, 255), th, cv2.LINE_AA)
-
-# =====================================================
-# CELL HIGHLIGHT
-# =====================================================
-
-def highlight_cell(frame, grid_x, grid_y, color=(0, 255, 255), alpha=0.3):
-    key = (grid_x, grid_y)
-    if key not in CELL_CORNERS:
-        return
-    overlay = frame.copy()
-    cv2.fillPoly(overlay, [CELL_CORNERS[key]], color)
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-
-# =====================================================
-# LIQUID COLOR DETECTION
+# DETECTION SETTINGS
 # =====================================================
 
 def detect_liquid_color(roi):
@@ -311,7 +216,7 @@ def get_liquid_roi(frame, x1, y1, x2, y2, object_name):
 # BOX SMOOTHING
 # =====================================================
 
-def smooth_box(object_id, box, alpha=0.85):
+def smooth_box(object_id, box, alpha=0.3):
     if object_id not in box_history:
         box_history[object_id] = box
         return box
@@ -361,13 +266,13 @@ def draw_info_panel(frame, detections):
                     (fx - panel_w - margin + 8, y_off),
                     font, 0.42, (0, 255, 200), 1, cv2.LINE_AA)
         y_off += line_h
-        cv2.putText(frame, f"  Grid Cell: ({d['grid_x']}, {d['grid_y']})",
-                    (fx - panel_w - margin + 8, y_off),
-                    font, 0.40, (255, 220, 60), 1, cv2.LINE_AA)
-        y_off += line_h
-        cv2.putText(frame, f"  X: {d['x_cm']:.1f} cm   Y: {d['y_cm']:.1f} cm",
+        cv2.putText(frame, f"  X: {d['x']}   Y: {d['y']}",
                     (fx - panel_w - margin + 8, y_off),
                     font, 0.40, (100, 200, 255), 1, cv2.LINE_AA)
+        y_off += line_h
+        cv2.putText(frame, f"  Z: {d['z']:.2f} (normalized)",
+                    (fx - panel_w - margin + 8, y_off),
+                    font, 0.40, (255, 180, 100), 1, cv2.LINE_AA)
         y_off += line_h
         cv2.putText(frame, f"  Conf: {d['confidence']:.2f}",
                     (fx - panel_w - margin + 8, y_off),
@@ -445,7 +350,7 @@ class YOLOWorker:
                     max_det=20,
 
                     verbose=False,
-                    device="cpu"
+                    device=INFERENCE_DEVICE,
                 )
 
             detections = []
@@ -485,20 +390,20 @@ class YOLOWorker:
 
                     cx_px = (x1 + x2) // 2
                     cy_px = (y1 + y2) // 2
-                    x_cm, y_cm = pixel_to_cm(cx_px, cy_px)
+                    bbox_area = (x2 - x1) * (y2 - y1)
 
-                    grid_x = int(x_cm // CELL_WIDTH_CM)
-                    grid_y = int(y_cm // CELL_HEIGHT_CM)
+                    if idx not in z_histories:
+                        z_histories[idx] = deque(maxlen=8)
+                    z_histories[idx].append(estimate_distance(bbox_area))
+                    z_norm = float(np.mean(z_histories[idx]))
 
                     detections.append({
                         "name":        object_name,
                         "color":       stable_color,
                         "confidence":  confidence,
-                        "grid_x":      grid_x,
-                        "grid_y":      grid_y,
-                        "x_cm":        x_cm,
-                        "y_cm":        y_cm,
-                        # extra fields needed for drawing
+                        "x":           int(cx_px),
+                        "y":           int(cy_px),
+                        "z":           round(z_norm, 3),
                         "box":         (x1, y1, x2, y2),
                         "roi_offsets": (rx1o, ry1o, rx2o, ry2o),
                     })
@@ -512,7 +417,37 @@ class YOLOWorker:
         self.thread.join()
 
 # =====================================================
-# START WORKER
+# LATEST DETECTIONS (for API consumers)
+# =====================================================
+
+_latest_detections = []
+_detections_lock = threading.Lock()
+
+
+def get_latest_detections():
+    with _detections_lock:
+        return [
+            {
+                "name": d["name"],
+                "color": d["color"],
+                "confidence": d["confidence"],
+                "x": d["x"],
+                "y": d["y"],
+                "z": d["z"],
+                "z_unit": "normalized",
+            }
+            for d in _latest_detections
+        ]
+
+
+def _set_latest_detections(detections):
+    global _latest_detections
+    with _detections_lock:
+        _latest_detections = list(detections)
+
+
+# =====================================================
+# MIXED GRID PROCESSOR (YOLO + coordinates, no grid overlay)
 # =====================================================
 
 class MixedGridProcessor(frameProcessor):
@@ -532,12 +467,8 @@ class MixedGridProcessor(frameProcessor):
             self.yolo_worker.submit(frame)
 
         annotated = frame.copy()
-        draw_grid(annotated)
-        draw_axis_labels(annotated)
-        for point in image_points:
-            cv2.circle(annotated, point.astype(int), 6, (0, 200, 0), -1)
-
         detections = self.yolo_worker.get_results()
+        _set_latest_detections(detections)
 
         for d in detections:
             x1, y1, x2, y2        = d["box"]
@@ -545,20 +476,14 @@ class MixedGridProcessor(frameProcessor):
             h = y2 - y1
             w = x2 - x1
 
-            if 0 <= d['grid_x'] < COLS and 0 <= d['grid_y'] < ROWS:
-                highlight_cell(annotated, d['grid_x'], d['grid_y'],
-                               color=(0, 200, 255), alpha=0.35)
-
             draw_color = (0, 255, 0) if d['color'] != "unknown" else (0, 255, 255)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), draw_color, 2)
 
-            label = f"{d['name']} | {d['color']} | {d['confidence']:.2f}"
-            cv2.putText(annotated, label, (x1, y1 - 10),
+            label = f"{d['name']} | ({d['x']}, {d['y']}, {d['z']:.2f})"
+            cv2.putText(annotated, label, (x1, max(y1 - 10, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, draw_color, 2)
 
-            cx_px = (x1 + x2) // 2
-            cy_px = (y1 + y2) // 2
-            cv2.circle(annotated, (cx_px, cy_px), 4, (0, 0, 255), -1)
+            cv2.circle(annotated, (d["x"], d["y"]), 4, (0, 0, 255), -1)
 
             cv2.rectangle(annotated,
                           (x1 + int(w * rx1o), y1 + int(h * ry1o)),
@@ -591,40 +516,26 @@ def main():
         annotated = frame.copy()
         frame_count += 1
 
-        draw_grid(annotated)
-        draw_axis_labels(annotated)
-
-        for point in image_points:
-            cv2.circle(annotated, point.astype(int), 6, (0, 200, 0), -1)
-
-        # ── Submit frame to background YOLO worker (non-blocking) ────────────
         if frame_count % SUBMIT_EVERY_N == 0:
             yolo_worker.submit(frame)
 
-        # ── Always fetch latest results — works even while YOLO is busy ──────
         detections = yolo_worker.get_results()
+        _set_latest_detections(detections)
 
-        # ── Draw detections (identical to original) ───────────────────────────
         for d in detections:
             x1, y1, x2, y2        = d["box"]
             rx1o, ry1o, rx2o, ry2o = d["roi_offsets"]
             h = y2 - y1
             w = x2 - x1
 
-            if 0 <= d['grid_x'] < COLS and 0 <= d['grid_y'] < ROWS:
-                highlight_cell(annotated, d['grid_x'], d['grid_y'],
-                               color=(0, 200, 255), alpha=0.35)
-
             draw_color = (0, 255, 0) if d['color'] != "unknown" else (0, 255, 255)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), draw_color, 2)
 
-            label = f"{d['name']} | {d['color']} | {d['confidence']:.2f}"
-            cv2.putText(annotated, label, (x1, y1 - 10),
+            label = f"{d['name']} | ({d['x']}, {d['y']}, {d['z']:.2f})"
+            cv2.putText(annotated, label, (x1, max(y1 - 10, 20)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, draw_color, 2)
 
-            cx_px = (x1 + x2) // 2
-            cy_px = (y1 + y2) // 2
-            cv2.circle(annotated, (cx_px, cy_px), 4, (0, 0, 255), -1)
+            cv2.circle(annotated, (d["x"], d["y"]), 4, (0, 0, 255), -1)
 
             cv2.rectangle(annotated,
                           (x1 + int(w * rx1o), y1 + int(h * ry1o)),
